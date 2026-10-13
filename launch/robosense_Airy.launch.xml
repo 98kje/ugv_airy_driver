@@ -1,0 +1,28 @@
+<launch>
+  <!-- Same role as common_sensor_launch/launch/velodyne_VLS128.launch.xml, for RoboSense Airy -->
+  <!-- Params -->
+  <arg name="launch_driver" default="true"/>
+  <arg name="sensor_frame" default="rs_airy_top"/>
+  <arg name="config_file" default="$(find-pkg-share ugv_airy_driver)/config/airy_rslidar.yaml"/>
+  <arg name="imu_frame_id" default="rs_airy/imu_link"/>
+  <arg name="imu_output_topic" default="/sensing/imu/rs_airy/imu_raw"/>
+  <arg name="vehicle_mirror_param_file"/>
+  <arg name="container_name" default="airy_node_container"/>
+  <!-- single LiDAR: output_topic=/sensing/lidar/concatenated/pointcloud, output_as_sensor_frame=false (base_link) -->
+  <arg name="output_topic" default="pointcloud_before_sync"/>
+  <arg name="output_as_sensor_frame" default="true"/>
+
+  <include file="$(find-pkg-share ugv_airy_driver)/launch/airy_node_container.launch.py">
+    <arg name="launch_driver" value="$(var launch_driver)"/>
+    <arg name="config_file" value="$(var config_file)"/>
+    <arg name="frame_id" value="$(var sensor_frame)"/>
+    <arg name="imu_frame_id" value="$(var imu_frame_id)"/>
+    <arg name="imu_output_topic" value="$(var imu_output_topic)"/>
+    <arg name="vehicle_mirror_param_file" value="$(var vehicle_mirror_param_file)"/>
+    <arg name="use_intra_process" value="true"/>
+    <arg name="use_multithread" value="true"/>
+    <arg name="container_name" value="$(var container_name)"/>
+    <arg name="output_topic" value="$(var output_topic)"/>
+    <arg name="output_as_sensor_frame" value="$(var output_as_sensor_frame)"/>
+  </include>
+</launch>
