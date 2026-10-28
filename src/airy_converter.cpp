@@ -1,8 +1,9 @@
 // Converts rslidar_sdk output (POINT_TYPE XYZIRT) into the Autoware sensing input format.
 //   pointcloud: x y z intensity(float) ring(uint16) timestamp(float64, absolute sec)
 //            -> autoware::point_types::PointXYZIRCAEDT
-//   imu:       acceleration in g, frame = lidar frame
-//            -> acceleration in m/s^2, frame = imu_frame_id
+//   imu:       acceleration in g, IMU chip axes
+//            -> acceleration in m/s^2, rotated into the lidar axes, frame = imu_frame_id
+//              (give imu_frame_id the same orientation as the lidar frame in the TF tree)
 
 #include <autoware/point_types/types.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -12,10 +13,13 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ugv_airy_driver
 {
@@ -36,6 +40,15 @@ public:
     imu_frame_id_ = declare_parameter<std::string>("imu_frame_id", "rs_airy/imu_link");
     // Airy IMU reports linear acceleration in g
     accel_scale_ = declare_parameter<double>("accel_scale", 9.80665);
+    // IMU chip -> lidar rotation [x, y, z, w]. The Airy reports it in DIFOP (qx..qw, offset 1092, big endian float);
+    // default = our unit (2026-10-28), a 180 deg turn about (1, -1, 0): x_lidar = -y_imu, y_lidar = -x_imu,
+    // z_lidar = -z_imu. Confirmed on the desk by gravity in two poses and a CCW turn.
+    const auto q = declare_parameter<std::vector<double>>(
+      "imu_to_lidar_quaternion", {0.7081, -0.7061, -0.0005, 0.0047});
+    if (q.size() != 4) {
+      throw std::invalid_argument("imu_to_lidar_quaternion must be [x, y, z, w]");
+    }
+    set_rotation(q[0], q[1], q[2], q[3]);
 
     pointcloud_pub_ = create_publisher<PointCloud2>("output/pointcloud", rclcpp::SensorDataQoS());
     // imu_corrector subscribes reliable, so a best-effort publisher would never reach it
@@ -118,13 +131,37 @@ private:
     pointcloud_pub_->publish(std::move(out));
   }
 
+  void set_rotation(double x, double y, double z, double w)
+  {
+    const double n = std::sqrt(x * x + y * y + z * z + w * w);
+    if (n < 1e-6) {
+      throw std::invalid_argument("imu_to_lidar_quaternion has zero norm");
+    }
+    x /= n;
+    y /= n;
+    z /= n;
+    w /= n;
+    rot_ = {{{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+             {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+             {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}}};
+  }
+
+  void rotate(geometry_msgs::msg::Vector3 & v, double scale) const
+  {
+    const double x = v.x * scale;
+    const double y = v.y * scale;
+    const double z = v.z * scale;
+    v.x = rot_[0][0] * x + rot_[0][1] * y + rot_[0][2] * z;
+    v.y = rot_[1][0] * x + rot_[1][1] * y + rot_[1][2] * z;
+    v.z = rot_[2][0] * x + rot_[2][1] * y + rot_[2][2] * z;
+  }
+
   void on_imu(const Imu::ConstSharedPtr msg)
   {
     auto out = std::make_unique<Imu>(*msg);
     out->header.frame_id = imu_frame_id_;
-    out->linear_acceleration.x *= accel_scale_;
-    out->linear_acceleration.y *= accel_scale_;
-    out->linear_acceleration.z *= accel_scale_;
+    rotate(out->linear_acceleration, accel_scale_);
+    rotate(out->angular_velocity, 1.0);
     out->orientation_covariance[0] = -1.0;  // no orientation estimate
     imu_pub_->publish(std::move(out));
   }
@@ -132,6 +169,7 @@ private:
   std::uint8_t return_type_{};
   std::string imu_frame_id_;
   double accel_scale_{};
+  std::array<std::array<double, 3>, 3> rot_{};
 
   rclcpp::Publisher<PointCloud2>::SharedPtr pointcloud_pub_;
   rclcpp::Publisher<Imu>::SharedPtr imu_pub_;
