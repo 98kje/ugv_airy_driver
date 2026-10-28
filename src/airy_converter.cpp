@@ -38,7 +38,8 @@ public:
     accel_scale_ = declare_parameter<double>("accel_scale", 9.80665);
 
     pointcloud_pub_ = create_publisher<PointCloud2>("output/pointcloud", rclcpp::SensorDataQoS());
-    imu_pub_ = create_publisher<Imu>("output/imu", rclcpp::SensorDataQoS());
+    // imu_corrector subscribes reliable, so a best-effort publisher would never reach it
+    imu_pub_ = create_publisher<Imu>("output/imu", rclcpp::QoS{10});
 
     pointcloud_sub_ = create_subscription<PointCloud2>(
       "input/pointcloud", rclcpp::SensorDataQoS(),
